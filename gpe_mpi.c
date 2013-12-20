@@ -6,14 +6,22 @@
 #include <fftw3.h>
 #include <mpi.h>
 #include <fftw3-mpi.h>
+#include <unistd.h>
 
+#define TRUE 1
+#define FALSE 0
+
+#define MASTER_RANK 0
 #define NX  256
 #define NY  16
 #define NZ  16
 
+int create_plans(fftw_plan *p_fwd, fftw_plan *p_bwd, fftw_complex *psi_local);
+
 int main(int argc, char **argv) {
 
     int rank, size;
+    char *input_filename = NULL;
 
     // Initialize MPI and fftw for MPI
     MPI_Init(&argc, &argv);
@@ -21,6 +29,38 @@ int main(int argc, char **argv) {
 
     MPI_Comm_size(MPI_COMM_WORLD, &size);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
+
+    // read inputs from file
+    int success = FALSE;
+    #define UNBLOCKME
+    #ifdef UNBLOCKME
+    if(rank == MASTER_RANK) {
+        int c;
+        FILE *fp;
+        while ((c = getopt(argc, argv, "f:h")) != EOF) {
+            switch(c) {
+            case 'f':
+                input_filename = optarg;
+                success = TRUE;
+                break;
+            case 'h':
+                printf("Supply a filename using -f input_filename.txt");
+                break;
+            } // end of switch(c)
+        } // end of while
+
+        if(success) {
+            printf("%s", input_filename);
+            fp = fopen(input_filename, "r");
+            int test_int;
+            fscanf(fp, "%d", &test_int);
+            printf("%d", test_int);
+            fclose(fp);
+        }
+    }
+    #endif
+
+    if(!success) MPI_Abort(MPI_COMM_WORLD, 1);
 
     // The MPI implementation of fftw splits up the 3d grid into blocks
     // where each node has only a subsection of grid in the X direction
