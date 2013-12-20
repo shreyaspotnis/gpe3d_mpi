@@ -8,6 +8,8 @@
 #include <fftw3-mpi.h>
 #include <unistd.h>
 
+#include "ini.h"
+
 #define TRUE 1
 #define FALSE 0
 
@@ -16,12 +18,29 @@
 #define NY  16
 #define NZ  16
 
+
+typedef struct configuration {
+    int Nx;
+    int Ny;
+    int Nz;
+    double dt;
+} configuration;
+
+/* Globals */
+int rank, size;
+/* End of globals */
+
+/* Function declarations */
 int create_plans(fftw_plan *p_fwd, fftw_plan *p_bwd, fftw_complex *psi_local);
+int read_config(configuration *cfg, int argc, char **argv);
+static int handler(void* user, const char* section, const char* name,
+                   const char* value);
+/* End of Function declarations */
+
 
 int main(int argc, char **argv) {
 
-    int rank, size;
-    char *input_filename = NULL;
+    configuration cfg;
 
     // Initialize MPI and fftw for MPI
     MPI_Init(&argc, &argv);
@@ -30,37 +49,7 @@ int main(int argc, char **argv) {
     MPI_Comm_size(MPI_COMM_WORLD, &size);
     MPI_Comm_rank(MPI_COMM_WORLD, &rank);
 
-    // read inputs from file
-    int success = FALSE;
-    #define UNBLOCKME
-    #ifdef UNBLOCKME
-    if(rank == MASTER_RANK) {
-        int c;
-        FILE *fp;
-        while ((c = getopt(argc, argv, "f:h")) != EOF) {
-            switch(c) {
-            case 'f':
-                input_filename = optarg;
-                success = TRUE;
-                break;
-            case 'h':
-                printf("Supply a filename using -f input_filename.txt");
-                break;
-            } // end of switch(c)
-        } // end of while
-
-        if(success) {
-            printf("%s", input_filename);
-            fp = fopen(input_filename, "r");
-            int test_int;
-            fscanf(fp, "%d", &test_int);
-            printf("%d", test_int);
-            fclose(fp);
-        }
-    }
-    #endif
-
-    if(!success) MPI_Abort(MPI_COMM_WORLD, 1);
+    read_config(&cfg, argc, argv);
 
     // The MPI implementation of fftw splits up the 3d grid into blocks
     // where each node has only a subsection of grid in the X direction
@@ -79,7 +68,7 @@ int main(int argc, char **argv) {
     psi_local = fftw_alloc_complex(alloc_local);
     create_plans(&p_fwd, &p_bwd, psi_local);
     
-    printf("task %d/%d!. x_s:%d\n", rank, size, x_start_local);
+    printf("task %d/%d!. x_s:%d Nx:%d\n", rank, size, x_start_local, cfg.Nx);
 
 
     // clean up
@@ -91,6 +80,35 @@ int main(int argc, char **argv) {
     return 0;
 }
 
+int read_config(configuration *cfg, int argc, char **argv) {
+    char *input_filename = NULL;
+    // read inputs from file
+    if(rank == MASTER_RANK) {
+        int success = FALSE;
+        int c;
+        FILE *fp;
+        success = FALSE;
+        while ((c = getopt(argc, argv, "f:")) != EOF) {
+            switch(c) {
+            case 'f':
+                input_filename = optarg;
+                success = TRUE;
+                break;
+            } // end of switch(c)
+        } // end of while
+        
+        if (ini_parse(input_filename, handler, cfg) < 0) {
+                printf("Can't load 'test.ini'\n");
+                success = FALSE;
+        }
+        if(!success)
+            MPI_Abort(MPI_COMM_WORLD, 1);
+    }
+    // send configuration to all processors
+    MPI_Bcast(cfg, sizeof(configuration), MPI_CHAR, MASTER_RANK,
+              MPI_COMM_WORLD);
+}
+
 int create_plans(fftw_plan *p_fwd, fftw_plan *p_bwd, fftw_complex *psi_local) {
 
     *p_fwd = fftw_mpi_plan_dft_3d(NX, NY, NZ, psi_local, psi_local,
@@ -99,4 +117,20 @@ int create_plans(fftw_plan *p_fwd, fftw_plan *p_bwd, fftw_complex *psi_local) {
                                      MPI_COMM_WORLD, FFTW_BACKWARD,
                                      FFTW_MEASURE);
     return 0;
+}
+
+static int handler(void* user, const char* section, const char* name,
+                   const char* value) {
+    configuration* pconfig = (configuration*)user;
+
+    #define MATCH(s, n) strcmp(section, s) == 0 && strcmp(name, n) == 0
+    if (MATCH("sim", "Nx")) 
+        pconfig->Nx = atoi(value);
+    else if (MATCH("sim", "Ny")) 
+        pconfig->Ny = atoi(value);
+    else if (MATCH("sim", "Nz")) 
+        pconfig->Nz = atoi(value);
+    else 
+        return 0;  /* unknown section/name, error */
+    return 1;
 }
