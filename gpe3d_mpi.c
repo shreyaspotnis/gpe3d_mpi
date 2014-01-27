@@ -19,6 +19,9 @@
 #define PI 3.1415926
 /* End of preprocessor definitions */
 
+// POW2 returns 1 if v is a power of 2
+#define POW2(v) (v && !(v & (v - 1)))
+
 #define MASTER_RANK 0
 
 typedef struct configuration {
@@ -47,6 +50,7 @@ int rank, size;
 int create_plans(configuration *cfg, fftw_plan *p_fwd, fftw_plan *p_bwd,
                  fftw_complex *psi_local);
 int read_config(configuration *cfg, int argc, char **argv);
+int check_config(configuration *cfg);
 int process_config(configuration *cfg);
 static int handler(void* user, const char* section, const char* name,
                    const char* value);
@@ -73,16 +77,16 @@ int main(int argc, char **argv) {
     // x_start_local will give us the start index on the local process.
     // alloc_local gives the amount of memory we need to allocate on the local
     // process.
-    ptrdiff_t alloc_local, Nx_local, x_start_local; 
+    ptrdiff_t alloc_local, Nx_local, x_start_local;
 
     alloc_local = fftw_mpi_local_size_3d(cfg.Nx, cfg.Ny, cfg.Nz, MPI_COMM_WORLD,
                                          &Nx_local, &x_start_local);
     fftw_complex *psi_local;
     fftw_plan p_fwd, p_bwd;
-    
+
     psi_local = fftw_alloc_complex(alloc_local);
     create_plans(&cfg, &p_fwd, &p_bwd, psi_local);
-    
+
     printf("task %d/%d!. x_s:%d Nx:%d\n", rank, size, x_start_local, cfg.Nx);
 
 
@@ -96,13 +100,13 @@ int main(int argc, char **argv) {
 }
 
 int read_config(configuration *cfg, int argc, char **argv) {
-    char *input_filename = NULL;
+    char *input_filename = "parms.ini";
     // read inputs from file
     if(rank == MASTER_RANK) {
         int success = FALSE;
         int c;
         FILE *fp;
-        success = FALSE;
+        success = TRUE;
         while ((c = getopt(argc, argv, "f:")) != EOF) {
             switch(c) {
             case 'f':
@@ -111,11 +115,14 @@ int read_config(configuration *cfg, int argc, char **argv) {
                 break;
             } // end of switch(c)
         } // end of while
-        
+
         if (ini_parse(input_filename, handler, cfg) < 0) {
-                printf("Can't load 'test.ini'\n");
+                fprintf(stderr, "Cannot load parms file: %s'\n", input_filename);
                 success = FALSE;
         }
+        if(check_config(cfg) != 0)
+            success = FALSE;
+        process_config(cfg);
         if(!success)
             MPI_Abort(MPI_COMM_WORLD, 1);
     }
@@ -141,27 +148,46 @@ static int handler(void* user, const char* section, const char* name,
     configuration* pconfig = (configuration*)user;
 
     #define MATCH(s, n) strcmp(section, s) == 0 && strcmp(name, n) == 0
-    if (MATCH("sim", "Nx")) 
+    if (MATCH("sim", "Nx"))
         pconfig->Nx = atoi(value);
-    else if (MATCH("sim", "Ny")) 
+    else if (MATCH("sim", "Ny"))
         pconfig->Ny = atoi(value);
-    else if (MATCH("sim", "Nz")) 
+    else if (MATCH("sim", "Nz"))
         pconfig->Nz = atoi(value);
-    else if (MATCH("sim", "Nt")) 
+    else if (MATCH("sim", "Nt"))
         pconfig->Nt = atoi(value);
-    else if (MATCH("sim", "Nt_store")) 
+    else if (MATCH("sim", "Nt_store"))
         pconfig->Nt_store = atoi(value);
-    else if (MATCH("sim", "dt")) 
+    else if (MATCH("sim", "dt"))
         pconfig->dt = atof(value);
-    else if (MATCH("sim", "dx")) 
+    else if (MATCH("sim", "dx"))
         pconfig->dx = atof(value);
-    else if (MATCH("sim", "time_scale")) 
+    else if (MATCH("sim", "time_scale"))
         pconfig->time_scale = atof(value);
-    else if (MATCH("sim", "length_scale")) 
+    else if (MATCH("sim", "length_scale"))
         pconfig->length_scale = atof(value);
-    else 
+    else
         return 0;  /* unknown section/name, error */
     return 1;
+}
+
+// Returns 1 if something wrong with config file, prints error to stderr
+int check_config(configuration *cfg) {
+    // find if Nx, Ny, Nz are powers of 2
+    if(!POW2(cfg->Nx)) {
+        fprintf(stderr, "Nx:%d is not a power of 2\n", cfg->Nx);
+        return 1;
+    }
+    if(!POW2(cfg->Ny)) {
+        fprintf(stderr, "Ny:%d is not a power of 2\n", cfg->Ny);
+        return 1;
+    }
+    if(!POW2(cfg->Nz)) {
+        fprintf(stderr, "Nz:%d is not a power of 2\n", cfg->Nz);
+        return 1;
+    }
+    return 0;
+
 }
 
 int process_config(configuration *cfg) {
