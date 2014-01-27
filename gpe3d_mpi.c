@@ -33,9 +33,8 @@ typedef struct configuration {
     int Nt;
     int Nt_store;
     double dt;
-    double dx;
-    double dy;
-    double dz;
+    double dx, dy, dz;
+    double dkx, dky, dkz;
 
     double time_scale;
     double length_scale;
@@ -61,6 +60,10 @@ static int handler(void* user, const char* section, const char* name,
 
 int create_1d_grids(double **x_grid, double **y_grid, double **z_grid,
                 configuration *cfg);
+int create_1d_k_grids(double **kx_grid, double **ky_grid, double **kz_grid,
+                configuration *cfg);
+int fill_k_grid(double *grid, int n_local, int n_global, int local_start,
+                double dk);
 
 /* End of Function declarations */
 
@@ -102,12 +105,17 @@ int main(int argc, char **argv) {
 
     // Create one dimensional grids for all three dimensions
     double *x_grid, *y_grid, *z_grid;
+    double *kx_grid, *ky_grid, *kz_grid;
     create_1d_grids(&x_grid, &y_grid, &z_grid, &cfg);
+    create_1d_k_grids(&kx_grid, &ky_grid, &kz_grid, &cfg);
 
     // clean up
     free(x_grid);
     free(y_grid);
     free(z_grid);
+    free(kx_grid);
+    free(ky_grid);
+    free(kz_grid);
     fftw_destroy_plan(p_fwd);
     fftw_destroy_plan(p_bwd);
     fftw_free(psi_local);
@@ -214,6 +222,11 @@ int check_config(configuration *cfg) {
 // Calculate quantities required for the simulation based on inputs in
 // configuration
 int process_config(configuration *cfg) {
+
+    cfg->dkx = 2.0*PI/(cfg->dx * cfg->Nx);
+    cfg->dky = 2.0*PI/(cfg->dy * cfg->Ny);
+    cfg->dkz = 2.0*PI/(cfg->dz * cfg->Nz);
+
     double ls = cfg->length_scale;
     cfg->energy_scale = HBAR / cfg->time_scale;
     cfg->K_mult = HBAR*HBAR/(2.0 * M_RB * ls * ls)
@@ -249,6 +262,30 @@ int create_1d_grids(double **x_grid, double **y_grid, double **z_grid,
         *y_grid[i] = i * cfg->dy - y_center;
     for(i = 0; i < cfg->Nz; ++i)
         *z_grid[i] = i * cfg->dz - z_center;
-
     return 0;
+}
+
+int create_1d_k_grids(double **kx_grid, double **ky_grid, double **kz_grid,
+                configuration *cfg) {
+
+    *kx_grid = (double*) malloc(cfg->Nx_local * sizeof(double));
+    *ky_grid = (double*) malloc(cfg->Ny * sizeof(double));
+    *kz_grid = (double*) malloc(cfg->Nz * sizeof(double));
+
+    fill_k_grid(*kx_grid, cfg->Nx_local, cfg->Nx, cfg->x_start_local,
+                cfg->dkx);
+    fill_k_grid(*ky_grid, cfg->Ny, cfg->Ny, 0, cfg->dky);
+    fill_k_grid(*kz_grid, cfg->Ny, cfg->Ny, 0, cfg->dkz);
+}
+
+int fill_k_grid(double *grid, int n_local, int n_global, int local_start,
+                double dk) {
+    int i_local, i_global;
+    for(i_local = 0; i_local < n_local; ++i_local) {
+        i_global = i_local + local_start;
+        if (i_global < n_global / 2)
+            grid[i_local] = i_global * dk;
+        else
+            grid[i_local] = (i_global - n_global) * dk;
+    }
 }
