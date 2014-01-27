@@ -26,12 +26,16 @@
 
 typedef struct configuration {
     int Nx;
+    int Nx_local;
+    int x_start_local;
     int Ny;
     int Nz;
     int Nt;
     int Nt_store;
     double dt;
     double dx;
+    double dy;
+    double dz;
 
     double time_scale;
     double length_scale;
@@ -54,6 +58,10 @@ int check_config(configuration *cfg);
 int process_config(configuration *cfg);
 static int handler(void* user, const char* section, const char* name,
                    const char* value);
+
+int create_1d_grids(double **x_grid, double **y_grid, double **z_grid,
+                configuration *cfg);
+
 /* End of Function declarations */
 
 
@@ -81,16 +89,25 @@ int main(int argc, char **argv) {
 
     alloc_local = fftw_mpi_local_size_3d(cfg.Nx, cfg.Ny, cfg.Nz, MPI_COMM_WORLD,
                                          &Nx_local, &x_start_local);
+    cfg.Nx_local = (int) Nx_local;
+    cfg.x_start_local = (int) x_start_local;
     fftw_complex *psi_local;
     fftw_plan p_fwd, p_bwd;
 
     psi_local = fftw_alloc_complex(alloc_local);
     create_plans(&cfg, &p_fwd, &p_bwd, psi_local);
 
-    printf("task %d/%d!. x_s:%d Nx:%d\n", rank, size, x_start_local, cfg.Nx);
+    printf("task %d/%d. x_start_local:%d Nx_local:%d\n", rank, size,
+            x_start_local, cfg.Nx);
 
+    // Create one dimensional grids for all three dimensions
+    double *x_grid, *y_grid, *z_grid;
+    create_1d_grids(&x_grid, &y_grid, &z_grid, &cfg);
 
     // clean up
+    free(x_grid);
+    free(y_grid);
+    free(z_grid);
     fftw_destroy_plan(p_fwd);
     fftw_destroy_plan(p_bwd);
     fftw_free(psi_local);
@@ -162,6 +179,10 @@ static int handler(void* user, const char* section, const char* name,
         pconfig->dt = atof(value);
     else if (MATCH("sim", "dx"))
         pconfig->dx = atof(value);
+    else if (MATCH("sim", "dy"))
+        pconfig->dx = atof(value);
+    else if (MATCH("sim", "dz"))
+        pconfig->dx = atof(value);
     else if (MATCH("sim", "time_scale"))
         pconfig->time_scale = atof(value);
     else if (MATCH("sim", "length_scale"))
@@ -190,6 +211,8 @@ int check_config(configuration *cfg) {
 
 }
 
+// Calculate quantities required for the simulation based on inputs in
+// configuration
 int process_config(configuration *cfg) {
     double ls = cfg->length_scale;
     cfg->energy_scale = HBAR / cfg->time_scale;
@@ -200,5 +223,32 @@ int process_config(configuration *cfg) {
     // TODO: check this again
     cfg->I_mult = (4.0 * PI * HBAR * HBAR * A_BG)/M_RB/(ls*ls*ls)
                   / cfg->energy_scale;
+    return 0;
+}
+
+// Fill x/y/z_grids with values.
+// x_grid is filled with x values using the local x index. This is different
+// for every MPI process.
+// The range of the values is from -(N-1)*dx/2 to (N-1)*dx/2. This ensures a
+// symmetry along the axis for even values of N, which we have.
+int create_1d_grids(double **x_grid, double **y_grid, double **z_grid,
+                configuration *cfg) {
+
+    *x_grid = (double*) malloc(cfg->Nx_local * sizeof(double));
+    *y_grid = (double*) malloc(cfg->Ny * sizeof(double));
+    *z_grid = (double*) malloc(cfg->Nz * sizeof(double));
+
+    double x_center = (cfg->Nx - 1)/2.0 * cfg->dx;
+    double y_center = (cfg->Ny - 1)/2.0 * cfg->dy;
+    double z_center = (cfg->Nz - 1)/2.0 * cfg->dz;
+
+    int i;
+    for(i = 0; i < cfg->Nx_local; ++i)
+        *x_grid[i] = (cfg->x_start_local + i) * cfg->dx - x_center;
+    for(i = 0; i < cfg->Ny; ++i)
+        *y_grid[i] = i * cfg->dy - y_center;
+    for(i = 0; i < cfg->Nz; ++i)
+        *z_grid[i] = i * cfg->dz - z_center;
+
     return 0;
 }
