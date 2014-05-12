@@ -13,12 +13,8 @@ typedef struct configuration {
     double dx, dy, dz;
     double dkx, dky, dkz;
 
-    double time_scale;
-    double length_scale;
-    double energy_scale;
-
     // simulation specific stuff
-    double fx, fy, fz; // for a harmonic oscillator potential
+    double gamma_y, gamma_z;
 
     double K_mult; // multiplier for the kinetic energy term
     double U_mult; // multiplier for the potential energy term

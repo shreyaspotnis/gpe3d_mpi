@@ -69,15 +69,10 @@ int process_config(configuration *cfg) {
     cfg->dky = 2.0*PI/(cfg->dy * cfg->Ny);
     cfg->dkz = 2.0*PI/(cfg->dz * cfg->Nz);
 
-    double ls = cfg->length_scale;
-    cfg->energy_scale = HBAR / cfg->time_scale;
-    cfg->K_mult = HBAR*HBAR/(2.0 * M_RB * ls * ls)
-                  / cfg->energy_scale;
-
+    cfg->K_mult = 0.0;
     cfg->U_mult = 0.0;
-    // TODO: check this again
-    cfg->I_mult = (4.0 * PI * HBAR * HBAR * A_BG)/M_RB/(ls*ls*ls)
-                  / cfg->energy_scale;
+    cfg->I_mult = 0.0;
+
     return 0;
 }
 
@@ -104,16 +99,10 @@ static int handler(void* user, const char* section, const char* name,
         pconfig->dy = atof(value);
     else if (MATCH("sim", "dz"))
         pconfig->dz = atof(value);
-    else if (MATCH("sim", "fx"))
-        pconfig->fx = atof(value);
-    else if (MATCH("sim", "fy"))
-        pconfig->fy = atof(value);
-    else if (MATCH("sim", "fz"))
-        pconfig->fz = atof(value);
-    else if (MATCH("sim", "time_scale"))
-        pconfig->time_scale = atof(value);
-    else if (MATCH("sim", "length_scale"))
-        pconfig->length_scale = atof(value);
+    else if (MATCH("sim", "gamma_y"))
+        pconfig->gamma_y = atof(value);
+    else if (MATCH("sim", "gamma_z"))
+        pconfig->gamma_z = atof(value);
     else
         return 0;  /* unknown section/name, error */
     return 1;
@@ -143,19 +132,9 @@ int print_configuration(configuration *cfg) {
     print_double("dz", cfg->dz);
     printf("\n");
 
-    print_double("dkx", cfg->dx);
-    print_double("dky", cfg->dy);
-    print_double("dkz", cfg->dz);
-    printf("\n");
-
-    print_double("time_scale", cfg->time_scale);
-    print_double("length_scale", cfg->length_scale);
-    print_double("energy_scale", cfg->energy_scale);
-    printf("\n");
-
-    print_double("fx", cfg->fx);
-    print_double("fy", cfg->fy);
-    print_double("fz", cfg->fz);
+    print_double("dkx", cfg->dkx);
+    print_double("dky", cfg->dky);
+    print_double("dkz", cfg->dkz);
     printf("\n");
 
     print_double("K_mult", cfg->K_mult);
