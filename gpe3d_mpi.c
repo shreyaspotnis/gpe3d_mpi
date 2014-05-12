@@ -9,54 +9,18 @@
 #include <unistd.h>
 
 #include "ini.h"
-
-/* Preprocessor definitions */
-#define TRUE 1
-#define FALSE 0
-#define HBAR 1.05457173e-34
-#define M_RB 1.44e-25
-#define A_BG 5.1e-9
-#define PI 3.1415926
-/* End of preprocessor definitions */
-
-// POW2 returns 1 if v is a power of 2
-#define POW2(v) (v && !(v & (v - 1)))
-
-#define MASTER_RANK 0
-
-typedef struct configuration {
-    int Nx;
-    int Nx_local;
-    int x_start_local;
-    int Ny;
-    int Nz;
-    int Nt;
-    int Nt_store;
-    double dt;
-    double dx, dy, dz;
-    double dkx, dky, dkz;
-
-    double time_scale;
-    double length_scale;
-    double energy_scale;
-
-    double K_mult; // multiplier for the kinetic energy term
-    double U_mult; // multiplier for the potential energy term
-    double I_mult; // multiplier for the interaction energy term
-} configuration;
+#include "common.h"
+#include "configuration.h"
 
 /* Globals */
 int rank, size;
 /* End of globals */
 
+
 /* Function declarations */
 int create_plans(configuration *cfg, fftw_plan *p_fwd, fftw_plan *p_bwd,
                  fftw_complex *psi_local);
-int read_config(configuration *cfg, int argc, char **argv);
-int check_config(configuration *cfg);
-int process_config(configuration *cfg);
-static int handler(void* user, const char* section, const char* name,
-                   const char* value);
+
 
 int create_1d_grids(double **x_grid, double **y_grid, double **z_grid,
                 configuration *cfg);
@@ -101,7 +65,7 @@ int main(int argc, char **argv) {
     create_plans(&cfg, &p_fwd, &p_bwd, psi_local);
 
     printf("task %d/%d. x_start_local:%d Nx_local:%d\n", rank, size,
-            x_start_local, cfg.Nx);
+            x_start_local, cfg.Nx_local);
 
     // Create one dimensional grids for all three dimensions
     double *x_grid, *y_grid, *z_grid;
@@ -110,6 +74,7 @@ int main(int argc, char **argv) {
     create_1d_k_grids(&kx_grid, &ky_grid, &kz_grid, &cfg);
 
     // clean up
+
     free(x_grid);
     free(y_grid);
     free(z_grid);
@@ -124,38 +89,6 @@ int main(int argc, char **argv) {
     return 0;
 }
 
-int read_config(configuration *cfg, int argc, char **argv) {
-    char *input_filename = "parms.ini";
-    // read inputs from file
-    if(rank == MASTER_RANK) {
-        int success = FALSE;
-        int c;
-        FILE *fp;
-        success = TRUE;
-        while ((c = getopt(argc, argv, "f:")) != EOF) {
-            switch(c) {
-            case 'f':
-                input_filename = optarg;
-                success = TRUE;
-                break;
-            } // end of switch(c)
-        } // end of while
-
-        if (ini_parse(input_filename, handler, cfg) < 0) {
-                fprintf(stderr, "Cannot load parms file: %s'\n", input_filename);
-                success = FALSE;
-        }
-        if(check_config(cfg) != 0)
-            success = FALSE;
-        process_config(cfg);
-        if(!success)
-            MPI_Abort(MPI_COMM_WORLD, 1);
-    }
-    // send configuration to all processors
-    MPI_Bcast(cfg, sizeof(configuration), MPI_CHAR, MASTER_RANK,
-              MPI_COMM_WORLD);
-}
-
 int create_plans(configuration *cfg, fftw_plan *p_fwd, fftw_plan *p_bwd,
                  fftw_complex *psi_local) {
 
@@ -168,76 +101,6 @@ int create_plans(configuration *cfg, fftw_plan *p_fwd, fftw_plan *p_bwd,
     return 0;
 }
 
-static int handler(void* user, const char* section, const char* name,
-                   const char* value) {
-    configuration* pconfig = (configuration*)user;
-
-    #define MATCH(s, n) strcmp(section, s) == 0 && strcmp(name, n) == 0
-    if (MATCH("sim", "Nx"))
-        pconfig->Nx = atoi(value);
-    else if (MATCH("sim", "Ny"))
-        pconfig->Ny = atoi(value);
-    else if (MATCH("sim", "Nz"))
-        pconfig->Nz = atoi(value);
-    else if (MATCH("sim", "Nt"))
-        pconfig->Nt = atoi(value);
-    else if (MATCH("sim", "Nt_store"))
-        pconfig->Nt_store = atoi(value);
-    else if (MATCH("sim", "dt"))
-        pconfig->dt = atof(value);
-    else if (MATCH("sim", "dx"))
-        pconfig->dx = atof(value);
-    else if (MATCH("sim", "dy"))
-        pconfig->dx = atof(value);
-    else if (MATCH("sim", "dz"))
-        pconfig->dx = atof(value);
-    else if (MATCH("sim", "time_scale"))
-        pconfig->time_scale = atof(value);
-    else if (MATCH("sim", "length_scale"))
-        pconfig->length_scale = atof(value);
-    else
-        return 0;  /* unknown section/name, error */
-    return 1;
-}
-
-// Returns 1 if something wrong with config file, prints error to stderr
-int check_config(configuration *cfg) {
-    // find if Nx, Ny, Nz are powers of 2
-    if(!POW2(cfg->Nx)) {
-        fprintf(stderr, "Nx:%d is not a power of 2\n", cfg->Nx);
-        return 1;
-    }
-    if(!POW2(cfg->Ny)) {
-        fprintf(stderr, "Ny:%d is not a power of 2\n", cfg->Ny);
-        return 1;
-    }
-    if(!POW2(cfg->Nz)) {
-        fprintf(stderr, "Nz:%d is not a power of 2\n", cfg->Nz);
-        return 1;
-    }
-    return 0;
-
-}
-
-// Calculate quantities required for the simulation based on inputs in
-// configuration
-int process_config(configuration *cfg) {
-
-    cfg->dkx = 2.0*PI/(cfg->dx * cfg->Nx);
-    cfg->dky = 2.0*PI/(cfg->dy * cfg->Ny);
-    cfg->dkz = 2.0*PI/(cfg->dz * cfg->Nz);
-
-    double ls = cfg->length_scale;
-    cfg->energy_scale = HBAR / cfg->time_scale;
-    cfg->K_mult = HBAR*HBAR/(2.0 * M_RB * ls * ls)
-                  / cfg->energy_scale;
-
-    cfg->U_mult = 0.0;
-    // TODO: check this again
-    cfg->I_mult = (4.0 * PI * HBAR * HBAR * A_BG)/M_RB/(ls*ls*ls)
-                  / cfg->energy_scale;
-    return 0;
-}
 
 // Fill x/y/z_grids with values.
 // x_grid is filled with x values using the local x index. This is different
@@ -257,11 +120,11 @@ int create_1d_grids(double **x_grid, double **y_grid, double **z_grid,
 
     int i;
     for(i = 0; i < cfg->Nx_local; ++i)
-        *x_grid[i] = (cfg->x_start_local + i) * cfg->dx - x_center;
+        (*x_grid)[i] = (cfg->x_start_local + i) * cfg->dx - x_center;
     for(i = 0; i < cfg->Ny; ++i)
-        *y_grid[i] = i * cfg->dy - y_center;
+        (*y_grid)[i] = i * cfg->dy - y_center;
     for(i = 0; i < cfg->Nz; ++i)
-        *z_grid[i] = i * cfg->dz - z_center;
+        (*z_grid)[i] = i * cfg->dz - z_center;
     return 0;
 }
 
