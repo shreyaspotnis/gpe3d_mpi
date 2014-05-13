@@ -29,7 +29,14 @@ int create_1d_k_grids(double **kx_grid, double **ky_grid, double **kz_grid,
 int fill_k_grid(double *grid, int n_local, int n_global, int local_start,
                 double dk);
 double norm_squared(fftw_complex *vec, int length);
+double potential_energy(configuration *cfg, double x, double y, double z);
 
+void x_unitary(configuration *cfg, double *x_grid, double *y_grid,
+               double *z_grid, fftw_complex *psi_local,
+               fftw_complex imag_pre_factor);
+void k_unitary(configuration *cfg, double *kx_grid, double *ky_grid,
+               double *kz_grid, fftw_complex *psi_local,
+               fftw_complex imag_pre_factor);
 /* End of Function declarations */
 
 
@@ -86,9 +93,8 @@ int main(int argc, char **argv) {
             y_c = y_grid[iy];
             for(iz = 0; iz < cfg.Nz; iz++) {
                 z_c = z_grid[iz];
-                double r_squared = z_c * z_c + x_c * x_c + y_c * y_c;
-                double psi2_val = (cfg.mu_theory - 0.5 * r_squared)
-                                  / cfg.kappa;
+                double pot_en = potential_energy(&cfg, x_c, y_c, z_c);
+                double psi2_val = (cfg.mu_theory - pot_en) / cfg.kappa;
                 if(psi2_val > 0.0)
                     psi_local[current_index] = sqrt(psi2_val);
                 else
@@ -99,14 +105,13 @@ int main(int argc, char **argv) {
     }
 
     fftw_complex imag_pre_factor;
-        if(cfg.imag_time)
-            imag_pre_factor = 1;
-        else
-            imag_pre_factor = I;
+    if(cfg.imag_time)
+        imag_pre_factor = 1;
+    else
+        imag_pre_factor = I;
 
     int Nt_skip = cfg.Nt / (cfg.Nt_store - 1);
 
-    double k_normalization = 1.0/(double)(cfg.Nx * cfg.Ny * cfg.Nz);
 
     /************************************/
     /* MAIN SIMULATION LOOP STARTS HERE */
@@ -121,44 +126,14 @@ int main(int argc, char **argv) {
 
 
         // Do X-unitary
-        for(ix = 0; ix < cfg.Nx_local; ix++) {
-            x_c = x_grid[ix];
-            for(iy = 0; iy < cfg.Ny; iy++) {
-                y_c = y_grid[iy];
-                for(iz = 0; iz < cfg.Nz; iz++) {
-                    z_c = z_grid[iz];
-                    double r_squared = z_c * z_c + x_c * x_c + y_c * y_c;
-                    fftw_complex psi_c = psi_local[current_index];
-                    double psi2_c = psi_c * conj(psi_c);
-                    double phase = -(0.5 * r_squared * cfg.dt * 0.5 +
-                                   cfg.kappa * psi2_c * cfg.dt * 0.5);
-                    psi_local[current_index] *= cexp(imag_pre_factor * phase);
-                    current_index++;
-                }
-            }
-        }
-
+        x_unitary(&cfg, x_grid, y_grid, z_grid, psi_local, imag_pre_factor);
 
         MPI_Barrier(MPI_COMM_WORLD);
         // Fourier transform
         fftw_execute(p_fwd);
 
-        // K-space unitary
-        current_index = 0;
-        for(ix = 0; ix < cfg.Nx_local; ix++) {
-            kx_c = kx_grid[ix];
-            for(iy = 0; iy < cfg.Ny; iy++) {
-                ky_c = ky_grid[iy];
-                for(iz = 0; iz < cfg.Nz; iz++) {
-                    kz_c = kz_grid[iz];
-                    double k_squared = kx_c * kx_c + ky_c * ky_c + kz_c * kz_c;
-                    double phase = -k_squared * cfg.dt * 0.5;
-                    psi_local[current_index] *= cexp(imag_pre_factor * phase) *
-                                                k_normalization;
-                    current_index++;
-                }
-            }
-        }
+        k_unitary(&cfg, kx_grid, ky_grid, kz_grid, psi_local, imag_pre_factor);
+
         MPI_Barrier(MPI_COMM_WORLD);
 
         // Inverse fourier transform
@@ -167,23 +142,7 @@ int main(int argc, char **argv) {
         MPI_Barrier(MPI_COMM_WORLD);
 
         // Do X-unitary
-        current_index = 0;
-        for(ix = 0; ix < cfg.Nx_local; ix++) {
-            x_c = x_grid[ix];
-            for(iy = 0; iy < cfg.Ny; iy++) {
-                y_c = y_grid[iy];
-                for(iz = 0; iz < cfg.Nz; iz++) {
-                    z_c = z_grid[iz];
-                    double r_squared = z_c * z_c + x_c * x_c + y_c * y_c;
-                    fftw_complex psi_c = psi_local[current_index];
-                    double psi2_c = psi_c * conj(psi_c);
-                    double phase = -(0.5 * r_squared * cfg.dt * 0.5 +
-                                   cfg.kappa * psi2_c * cfg.dt * 0.5);
-                    psi_local[current_index] *= cexp(imag_pre_factor * phase);
-                    current_index++;
-                }
-            }
-        }
+        x_unitary(&cfg, x_grid, y_grid, z_grid, psi_local, imag_pre_factor);
 
         MPI_Barrier(MPI_COMM_WORLD);
         if(cfg.imag_time) {
@@ -292,9 +251,62 @@ double norm_squared(fftw_complex *vec, int length) {
     sum_local = 0.0;
     for(j = 0; j < length; j++)
         sum_local += vec[j] * conj(vec[j]);
-    MPI_Reduce(&sum_local, &sum_global, 1, MPI_DOUBLE, MPI_SUM, MASTER_RANK,
-               MPI_COMM_WORLD);
-    MPI_Bcast(&sum_global, 1, MPI_DOUBLE, MASTER_RANK, MPI_COMM_WORLD);
+    MPI_Allreduce(&sum_local, &sum_global, 1, MPI_DOUBLE, MPI_SUM,
+                  MPI_COMM_WORLD);
     return sum_global;
 
+}
+
+
+double potential_energy(configuration *cfg, double x, double y, double z) {
+    // Returns the potential energy at the point (x, y, z)
+    return 0.5 * (x * x + y * y * cfg->gamma_y * cfg->gamma_y
+                  + z * z * cfg->gamma_z * cfg->gamma_z);
+}
+
+void x_unitary(configuration *cfg, double *x_grid, double *y_grid,
+               double *z_grid, fftw_complex *psi_local,
+               fftw_complex imag_pre_factor) {
+    int ix, iy, iz;
+    double x_c, y_c, z_c;
+    int current_index = 0;
+    for(ix = 0; ix < cfg->Nx_local; ix++) {
+        x_c = x_grid[ix];
+        for(iy = 0; iy < cfg->Ny; iy++) {
+            y_c = y_grid[iy];
+            for(iz = 0; iz < cfg->Nz; iz++) {
+                z_c = z_grid[iz];
+                double pot_en = potential_energy(cfg, x_c, y_c, z_c);
+                fftw_complex psi_c = psi_local[current_index];
+                double psi2_c = psi_c * conj(psi_c);
+                double phase = -(pot_en * cfg->dt * 0.5 +
+                               cfg->kappa * psi2_c * cfg->dt * 0.5);
+                psi_local[current_index] *= cexp(imag_pre_factor * phase);
+                current_index++;
+            }
+        }
+    }
+}
+
+void k_unitary(configuration *cfg, double *kx_grid, double *ky_grid,
+               double *kz_grid, fftw_complex *psi_local,
+               fftw_complex imag_pre_factor) {
+    int current_index = 0;
+    int ix, iy, iz;
+    double kx_c, ky_c, kz_c;
+    double k_normalization = 1.0/(double)(cfg->Nx * cfg->Ny * cfg->Nz);
+    for(ix = 0; ix < cfg->Nx_local; ix++) {
+        kx_c = kx_grid[ix];
+        for(iy = 0; iy < cfg->Ny; iy++) {
+            ky_c = ky_grid[iy];
+            for(iz = 0; iz < cfg->Nz; iz++) {
+                kz_c = kz_grid[iz];
+                double k_squared = kx_c * kx_c + ky_c * ky_c + kz_c * kz_c;
+                double phase = -k_squared * cfg->dt * 0.5;
+                psi_local[current_index] *= cexp(imag_pre_factor * phase) *
+                                            k_normalization;
+                current_index++;
+            }
+        }
+    }
 }
