@@ -69,9 +69,11 @@ int process_config(configuration *cfg) {
     cfg->dky = 2.0*PI/(cfg->dy * cfg->Ny);
     cfg->dkz = 2.0*PI/(cfg->dz * cfg->Nz);
 
-    cfg->K_mult = 0.0;
-    cfg->U_mult = 0.0;
-    cfg->I_mult = 0.0;
+    cfg->mu_theory = pow(15.0 * cfg->kappa * cfg->gamma_y * cfg -> gamma_z /
+                      4.0 / PI, 2.0/5.0) * 0.5;
+    cfg->rx_theory = sqrt(cfg->mu_theory * 2.0);
+    cfg->ry_theory = cfg->rx_theory / cfg->gamma_y;
+    cfg->rz_theory = cfg->rx_theory / cfg->gamma_z;
 
     return 0;
 }
@@ -87,6 +89,8 @@ static int handler(void* user, const char* section, const char* name,
         pconfig->Ny = atoi(value);
     else if (MATCH("sim", "Nz"))
         pconfig->Nz = atoi(value);
+    else if (MATCH("sim", "imag_time"))
+        pconfig->imag_time = atoi(value);
     else if (MATCH("sim", "Nt"))
         pconfig->Nt = atoi(value);
     else if (MATCH("sim", "Nt_store"))
@@ -103,6 +107,8 @@ static int handler(void* user, const char* section, const char* name,
         pconfig->gamma_y = atof(value);
     else if (MATCH("sim", "gamma_z"))
         pconfig->gamma_z = atof(value);
+    else if (MATCH("sim", "kappa"))
+        pconfig->kappa = atof(value);
     else
         return 0;  /* unknown section/name, error */
     return 1;
@@ -117,6 +123,7 @@ int print_double(const char *variable_name, double variable) {
 }
 
 int print_configuration(configuration *cfg) {
+    printf("Input parameters:\n");
     print_int("Nx", cfg->Nx);
     print_int("Ny", cfg->Ny);
     print_int("Nz", cfg->Nz);
@@ -124,6 +131,7 @@ int print_configuration(configuration *cfg) {
 
     print_int("Nt", cfg->Nt);
     print_int("Nt_store", cfg->Nt_store);
+    print_int("imag_time", cfg->imag_time);
     print_double("dt", cfg->dt);
     printf("\n");
 
@@ -132,13 +140,18 @@ int print_configuration(configuration *cfg) {
     print_double("dz", cfg->dz);
     printf("\n");
 
+    print_double("gamma_y", cfg->gamma_y);
+    print_double("gamma_z", cfg->gamma_z);
+    print_double("kappa", cfg->kappa);
+
+    printf("Calculated parameters:\n");
     print_double("dkx", cfg->dkx);
     print_double("dky", cfg->dky);
     print_double("dkz", cfg->dkz);
+    print_double("mu_theory", cfg->mu_theory);
+    print_double("rx_theory", cfg->rx_theory);
+    print_double("ry_theory", cfg->ry_theory);
+    print_double("rz_theory", cfg->rz_theory);
     printf("\n");
 
-    print_double("K_mult", cfg->K_mult);
-    print_double("U_mult", cfg->U_mult);
-    print_double("I_mult", cfg->I_mult);
-    printf("\n");
 }

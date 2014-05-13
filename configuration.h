@@ -15,10 +15,14 @@ typedef struct configuration {
 
     // simulation specific stuff
     double gamma_y, gamma_z;
+    double kappa;
 
-    double K_mult; // multiplier for the kinetic energy term
-    double U_mult; // multiplier for the potential energy term
-    double I_mult; // multiplier for the interaction energy term
+    // calculated stuff
+    double mu_theory;
+    double rx_theory, ry_theory, rz_theory;
+
+    int imag_time;
+
 } configuration;
 
 int read_config(configuration *cfg, int argc, char **argv);
